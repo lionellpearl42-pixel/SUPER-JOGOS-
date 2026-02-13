@@ -1,13 +1,13 @@
 {
-  "name": "casino-ai-arena",
+  "name": "casino-top-telegram",
   "version": "1.0.0",
   "main": "src/bot.js",
+  "dependencies": {
+    "node-telegram-bot-api": "^0.61.0",
+    "sqlite3": "^5.1.6",
+    "dotenv": "^16.3.1"
+  },
   "scripts": {
     "start": "node src/bot.js"
-  },
-  "dependencies": {
-    "dotenv": "^16.4.0",
-    "node-telegram-bot-api": "^0.61.0",
-    "sqlite3": "^5.1.6"
   }
 }
