@@ -121,10 +121,8 @@ bot.on("callback_query", async (query) => {
       user.coins -= bet;
       await updateUser(userId, user);
 
-      // Mensagem inicial
       const msg = await bot.sendMessage(chatId, `🎰 Girando...`, { parse_mode: "Markdown" });
 
-      // Simulação de giro
       const reels = [
         ["🍒","🍋","🍊","7️⃣","🍀"],
         ["🍒","🍋","🍊","7️⃣","🍀"],
@@ -141,7 +139,7 @@ bot.on("callback_query", async (query) => {
           });
           if (i === 9) {
             finalResult = reelResult;
-            let payout = spin(finalResult).payout; // função spin real adaptada para resultado
+            let payout = spin(finalResult).payout || 0;
             user.coins += payout;
             await updateUser(userId, user);
 
@@ -197,7 +195,7 @@ bot.on("callback_query", async (query) => {
       return;
     }
 
-    // ---------- Blackjack com cartas ----------
+    // ---------- Blackjack com cartas seguras ----------
     case "game_blackjack":
     case "play_blackjack": {
       const user = await getUser(userId);
@@ -206,11 +204,17 @@ bot.on("callback_query", async (query) => {
 
       user.coins -= bet;
 
-      const result = playBlackjack(bet); // deve retornar {playerCards: [], dealerCards: [], payout}
-      user.coins += result.payout;
+      const result = playBlackjack(bet) || {};
+      const playerCards = result.playerCards || ["🂠","🂠"];
+      const dealerCards = result.dealerCards || ["🂠","🂠"];
+      const payout = result.payout || 0;
+
+      user.coins += payout;
       await updateUser(userId, user);
 
-      const resultText = `🃏 Suas cartas: ${result.playerCards.join(" ")}\n🂠 Dealer: ${result.dealerCards.join(" ")}\n💸 Ganhou: ${result.payout} coins`;
+      const resultText = `🃏 Suas cartas: ${playerCards.join(" ")}
+🂠 Dealer: ${dealerCards.join(" ")}
+💸 Ganhou: ${payout} coins`;
 
       playerState[userId].currentGame = "Blackjack";
       return showGameLayout(chatId, userId, "Blackjack", resultText);
