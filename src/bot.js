@@ -1,9 +1,10 @@
 require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
 const { getUser, updateCoins } = require("./database");
-const { spinSlot } = require("./games/slot");
-const { spinRoulette } = require("./games/roulette");
-const { playBlackjack } = require("./games/blackjack");
+const { spinSlot } = require("../games/slot");
+const { spinRoulette } = require("../games/roulette");
+const { playBlackjack } = require("../games/blackjack");
+
 
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
