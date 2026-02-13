@@ -1,30 +1,17 @@
-const symbols = [
-  { s: "🍒", w: 0.4 },
-  { s: "🍋", w: 0.3 },
-  { s: "⭐", w: 0.2 },
-  { s: "💎", w: 0.09 },
-  { s: "👑", w: 0.01 }
-];
+const emojis = ["🍒", "🍋", "🔔", "💎", "7️⃣"];
 
-function spin() {
-  const roll = () => {
-    let r = Math.random();
-    let acc = 0;
-    for (let sym of symbols) {
-      acc += sym.w;
-      if (r <= acc) return sym.s;
-    }
-  };
+function spinSlot() {
+  const reel = [
+    emojis[Math.floor(Math.random() * emojis.length)],
+    emojis[Math.floor(Math.random() * emojis.length)],
+    emojis[Math.floor(Math.random() * emojis.length)]
+  ];
 
-  const a = roll(), b = roll(), c = roll();
   let payout = 0;
+  if (reel[0] === reel[1] && reel[1] === reel[2]) payout = 100;
+  else if (reel[0] === reel[1] || reel[1] === reel[2]) payout = 20;
 
-  if (a === b && b === c) {
-    if (a === "👑") payout = 100;
-    else payout = 10;
-  }
-
-  return { combo: `${a} ${b} ${c}`, payout };
+  return { combo: reel.join(" | "), payout };
 }
 
-module.exports = { spin };
+module.exports = { spinSlot };
