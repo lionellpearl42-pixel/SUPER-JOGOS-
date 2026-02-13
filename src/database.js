@@ -1,40 +1,55 @@
-const { Pool } = require("pg");
+const sqlite3 = require("sqlite3").verbose();
+const db = new sqlite3.Database("./casino.db");
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+db.serialize(() => {
+  db.run(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    coins INTEGER DEFAULT 100
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    game TEXT,
+    bet INTEGER,
+    result INTEGER,
+    date TEXT
+  )`);
 });
 
-async function initDB() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      telegram_id BIGINT PRIMARY KEY,
-      coins INT DEFAULT 1000,
-      wins INT DEFAULT 0,
-      losses INT DEFAULT 0,
-      total_profit INT DEFAULT 0,
-      tournament_points INT DEFAULT 0,
-      last_bet BIGINT DEFAULT 0
-    )
-  `);
+function getUser(id) {
+  return new Promise((resolve) => {
+    db.get("SELECT * FROM users WHERE id=?", [id], (err, row) => {
+      if (!row) {
+        db.run("INSERT INTO users (id, coins) VALUES (?, ?)", [id, 100]);
+        resolve({ id, coins: 100 });
+      } else resolve(row);
+    });
+  });
 }
 
-async function getUser(id) {
-  const res = await pool.query("SELECT * FROM users WHERE telegram_id=$1", [id]);
-  if (res.rows.length === 0) {
-    await pool.query("INSERT INTO users (telegram_id) VALUES ($1)", [id]);
-    return (await pool.query("SELECT * FROM users WHERE telegram_id=$1", [id])).rows[0];
-  }
-  return res.rows[0];
+function updateCoins(id, coins) {
+  return new Promise((resolve, reject) => {
+    db.run("UPDATE users SET coins=? WHERE id=?", [coins, id], function(err) {
+      if (err) reject(err); else resolve();
+    });
+  });
 }
 
-async function updateUser(id, data) {
-  await pool.query(
-    `UPDATE users 
-     SET coins=$1, wins=$2, losses=$3, total_profit=$4, tournament_points=$5 
-     WHERE telegram_id=$6`,
-    [data.coins, data.wins, data.losses, data.total_profit, data.tournament_points, id]
-  );
+function addHistory(user_id, game, bet, result) {
+  const date = new Date().toISOString();
+  db.run("INSERT INTO history (user_id, game, bet, result, date) VALUES (?, ?, ?, ?, ?)",
+    [user_id, game, bet, result, date]);
 }
 
-module.exports = { pool, initDB, getUser, updateUser };
+function getHistory(user_id) {
+  return new Promise((resolve, reject) => {
+    db.all("SELECT * FROM history WHERE user_id=? ORDER BY id DESC LIMIT 10", [user_id],
+      (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      });
+  });
+}
+
+module.exports = { getUser, updateCoins, addHistory, getHistory };
