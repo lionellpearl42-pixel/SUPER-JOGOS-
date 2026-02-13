@@ -1,24 +1,94 @@
 require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
-const { getUser, updateCoins } = require("./database");
-const { spinSlot } = require("../games/slot");
-const { spinRoulette } = require("../games/roulette");
-const { playBlackjack } = require("../games/blackjack");
-
+const sqlite3 = require("sqlite3").verbose();
 
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
-const BET = 10;
+/* ================= DATABASE ================= */
+
+const db = new sqlite3.Database("./casino.db");
+
+db.serialize(() => {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY,
+      coins INTEGER DEFAULT 1000
+    )
+  `);
+});
+
+function getUser(id) {
+  return new Promise((resolve) => {
+    db.get("SELECT * FROM users WHERE id = ?", [id], (err, row) => {
+      if (!row) {
+        db.run("INSERT INTO users (id, coins) VALUES (?, 1000)", [id]);
+        return resolve({ id, coins: 1000 });
+      }
+      resolve(row);
+    });
+  });
+}
+
+function updateCoins(id, coins) {
+  return new Promise((resolve) => {
+    db.run("UPDATE users SET coins = ? WHERE id = ?", [coins, id], resolve);
+  });
+}
+
+/* ================= GAMES ================= */
+
+function spinSlot() {
+  const symbols = ["🍒","🍋","🍊","💎","7️⃣"];
+  const result = [
+    symbols[Math.floor(Math.random()*symbols.length)],
+    symbols[Math.floor(Math.random()*symbols.length)],
+    symbols[Math.floor(Math.random()*symbols.length)]
+  ];
+
+  let payout = 0;
+  if (result[0] === result[1] && result[1] === result[2]) {
+    payout = result[0] === "7️⃣" ? 200 : 50;
+  }
+
+  return { combo: result.join(" | "), payout };
+}
+
+function spinRoulette() {
+  const colors = ["🔴 Vermelho","⚫ Preto","🟢 Verde"];
+  const result = colors[Math.floor(Math.random()*colors.length)];
+  const payout = result === "🟢 Verde" ? 140 : 20;
+  return { result, payout };
+}
+
+function playBlackjack() {
+  const cards = ["A♠","K♠","Q♠","J♠","10♠","9♠","8♠"];
+
+  const player = [
+    cards[Math.floor(Math.random()*cards.length)],
+    cards[Math.floor(Math.random()*cards.length)]
+  ];
+
+  const dealer = [
+    cards[Math.floor(Math.random()*cards.length)],
+    cards[Math.floor(Math.random()*cards.length)]
+  ];
+
+  const payout = Math.random() > 0.5 ? 30 : 0;
+
+  return { player, dealer, payout };
+}
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/* ================= MENU ================= */
+
 async function showMenu(chatId, userId) {
   const user = await getUser(userId);
 
   return bot.sendMessage(chatId,
-`🎰 *CASSINO ROYAL TELEGRAM*
+`🎰 *CASSINO ROYAL*
 
 💰 Saldo: *${user.coins} coins*
 
@@ -27,9 +97,9 @@ Escolha seu jogo:`,
   parse_mode: "Markdown",
   reply_markup: {
     inline_keyboard: [
-      [{ text: "🎰 Slot Machine", callback_data: "slot" }],
-      [{ text: "🎡 Roleta Europeia", callback_data: "roulette" }],
-      [{ text: "🃏 Blackjack 21", callback_data: "blackjack" }]
+      [{ text: "🎰 Slot", callback_data: "slot" }],
+      [{ text: "🎡 Roleta", callback_data: "roulette" }],
+      [{ text: "🃏 Blackjack", callback_data: "blackjack" }]
     ]
   }
 });
@@ -38,6 +108,10 @@ Escolha seu jogo:`,
 bot.onText(/\/start/, async (msg) => {
   await showMenu(msg.chat.id, msg.from.id);
 });
+
+/* ================= GAME HANDLER ================= */
+
+const BET = 10;
 
 bot.on("callback_query", async (query) => {
 
@@ -52,7 +126,6 @@ bot.on("callback_query", async (query) => {
     return;
   }
 
-  // ================= SLOT =================
   if (data === "slot") {
 
     user.coins -= BET;
@@ -61,7 +134,7 @@ bot.on("callback_query", async (query) => {
     const anim = await bot.sendAnimation(
       chatId,
       "https://media.giphy.com/media/l3q2K5jinAlChoCLS/giphy.gif",
-      { caption: "🎰 Girando Slot..." }
+      { caption: "🎰 Girando..." }
     );
 
     await sleep(2500);
@@ -71,16 +144,15 @@ bot.on("callback_query", async (query) => {
     await updateCoins(userId, user.coins);
 
     await bot.editMessageCaption(
-`🎰 *SLOT MACHINE*
+`🎰 SLOT
 
 ${result.combo}
 
-💰 Ganhou: *${result.payout}*
-💎 Saldo: *${user.coins}*`,
+💰 Ganhou: ${result.payout}
+💎 Saldo: ${user.coins}`,
 {
   chat_id: chatId,
   message_id: anim.message_id,
-  parse_mode: "Markdown",
   reply_markup: {
     inline_keyboard: [
       [{ text: "🔁 Jogar novamente", callback_data: "slot" }],
@@ -91,16 +163,15 @@ ${result.combo}
 
   }
 
-  // ================= ROLETA =================
   if (data === "roulette") {
 
     user.coins -= BET;
     await updateCoins(userId, user.coins);
 
-    const video = await bot.sendVideo(
+    const msg = await bot.sendVideo(
       chatId,
       "https://samplelib.com/lib/preview/mp4/sample-5s.mp4",
-      { caption: "🎡 Girando Roleta..." }
+      { caption: "🎡 Girando..." }
     );
 
     await sleep(3000);
@@ -110,16 +181,15 @@ ${result.combo}
     await updateCoins(userId, user.coins);
 
     await bot.editMessageCaption(
-`🎡 *ROLETA EUROPEIA*
+`🎡 ROLETA
 
 Resultado: ${result.result}
 
-💰 Ganhou: *${result.payout}*
-💎 Saldo: *${user.coins}*`,
+💰 Ganhou: ${result.payout}
+💎 Saldo: ${user.coins}`,
 {
   chat_id: chatId,
-  message_id: video.message_id,
-  parse_mode: "Markdown",
+  message_id: msg.message_id,
   reply_markup: {
     inline_keyboard: [
       [{ text: "🔁 Girar novamente", callback_data: "roulette" }],
@@ -130,27 +200,24 @@ Resultado: ${result.result}
 
   }
 
-  // ================= BLACKJACK =================
   if (data === "blackjack") {
 
     user.coins -= BET;
     await updateCoins(userId, user.coins);
 
     const game = playBlackjack();
-
     user.coins += game.payout;
     await updateCoins(userId, user.coins);
 
     await bot.sendMessage(chatId,
-`🃏 *BLACKJACK 21*
+`🃏 BLACKJACK
 
 Você: ${game.player.join(" | ")}
 Dealer: ${game.dealer.join(" | ")}
 
-💰 Ganhou: *${game.payout}*
-💎 Saldo: *${user.coins}*`,
+💰 Ganhou: ${game.payout}
+💎 Saldo: ${user.coins}`,
 {
-  parse_mode: "Markdown",
   reply_markup: {
     inline_keyboard: [
       [{ text: "🔁 Jogar novamente", callback_data: "blackjack" }],
@@ -158,7 +225,6 @@ Dealer: ${game.dealer.join(" | ")}
     ]
   }
 });
-
   }
 
   if (data === "menu") {
