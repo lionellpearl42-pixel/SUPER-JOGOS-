@@ -1,21 +1,37 @@
 require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
-const { initDB, getUser, updateUser } = require("./database");
-const { playRoulette } = require("./games/roulette");
-const { spin } = require("./games/slots");
-const { playBlackjack } = require("./games/blackjack");
-const { duel } = require("./games/duel");
-const { canBet } = require("./antiSpam");
-const { addTournamentPoints, leaderboard } = require("./tournament");
+const {
+  initDB,
+  getUser,
+  updateUser
+} = require("./database");
 
-const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
+const {
+  spin
+} = require("./games/slots");
+const {
+  playRoulette
+} = require("./games/roulette");
+const {
+  playBlackjack
+} = require("./games/blackjack");
+const {
+  duel
+} = require("./games/duel");
+
+// Estado de cada jogador
+const playerState = {}; // { userId: { currentGame, lastResult } }
+
+const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, {
+  polling: true
+});
 initDB();
 
-// Função para mostrar menu
+// Função para mostrar menu principal
 async function showMenu(chatId, userId) {
   const user = await getUser(userId);
 
-  const menuText = `
+  const text = `
 🎮 *Casino AI Arena*
 
 💰 Saldo: ${user.coins} coins
@@ -27,12 +43,12 @@ async function showMenu(chatId, userId) {
     reply_markup: {
       inline_keyboard: [
         [
-          { text: "🎰 Slot", callback_data: "slot" },
-          { text: "🎯 Roleta", callback_data: "roleta" }
+          { text: "🎰 Slot", callback_data: "game_slot" },
+          { text: "🎯 Roleta", callback_data: "game_roulette" }
         ],
         [
-          { text: "🃏 Blackjack", callback_data: "blackjack" },
-          { text: "⚔️ Duel", callback_data: "duel_menu" }
+          { text: "🃏 Blackjack", callback_data: "game_blackjack" },
+          { text: "⚔️ Duel", callback_data: "game_duel" }
         ],
         [
           { text: "🏆 Ranking", callback_data: "ranking" }
@@ -42,7 +58,7 @@ async function showMenu(chatId, userId) {
     parse_mode: "Markdown"
   };
 
-  bot.sendMessage(chatId, menuText, options);
+  bot.sendMessage(chatId, text, options);
 }
 
 // /start ou /menu
@@ -50,64 +66,110 @@ bot.onText(/\/start|\/menu/, async (msg) => {
   await showMenu(msg.chat.id, msg.from.id);
 });
 
-// 🔹 Callback para todos os botões
+// Função para mostrar layout de jogo com botões “Jogar de novo”, “Mudar de jogo”, “Voltar ao menu”
+async function showGameLayout(chatId, userId, gameName, resultText) {
+  const user = await getUser(userId);
+
+  const text = `
+🎲 *${gameName}*
+
+💰 Saldo: ${user.coins} coins
+
+${resultText || ""}
+`;
+
+  const options = {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: "▶️ Jogar de novo", callback_data: `play_${gameName.toLowerCase()}` }
+        ],
+        [
+          { text: "🔄 Mudar de jogo", callback_data: "menu_games" },
+          { text: "🏠 Voltar ao menu", callback_data: "menu_main" }
+        ]
+      ]
+    },
+    parse_mode: "Markdown"
+  };
+
+  bot.sendMessage(chatId, text, options);
+}
+
+// Callback query para todos os botões
 bot.on("callback_query", async (query) => {
   const chatId = query.message.chat.id;
   const userId = query.from.id;
-  const user = await getUser(userId);
 
+  // Inicializa estado se não existir
+  if (!playerState[userId]) playerState[userId] = { currentGame: null };
+
+  // ---------- Menu de jogos ----------
   switch (query.data) {
 
-    // 🎰 Slot
-    case "slot":
-      if (!canBet(user)) return bot.answerCallbackQuery(query.id, { text: "⏳ Aguarde 5s." });
-      const slotResult = spin();
-      const slotBet = 10;
-      user.coins -= slotBet;
-      if (slotResult.payout > 0) user.coins += slotResult.payout;
-      user.last_bet = Date.now();
+    case "menu_main":
+      return showMenu(chatId, userId);
+
+    case "menu_games":
+      return showMenu(chatId, userId);
+
+    // ---------- Slot ----------
+    case "game_slot":
+    case "play_slot": {
+      const result = spin(); // função real da slot
+      const user = await getUser(userId);
+      const bet = 10;
+      user.coins -= bet;
+      if (result.payout > 0) user.coins += result.payout;
       await updateUser(userId, user);
-      bot.sendMessage(chatId, `🎰 Slot: ${slotResult.combo}\n💰 Saldo: ${user.coins}`);
-      break;
 
-    // 🎯 Roleta
-    case "roleta":
-      if (!canBet(user)) return bot.answerCallbackQuery(query.id, { text: "⏳ Aguarde 5s." });
-      const colors = ["vermelho", "preto", "verde"];
-      const chosenColor = colors[Math.floor(Math.random() * colors.length)];
-      const roulette = playRoulette(10, chosenColor);
-      user.coins -= 10;
-      if (roulette.payout > 0) user.coins += roulette.payout;
-      user.last_bet = Date.now();
+      const resultText = `🎰 Resultado: ${result.combo}\n💸 Ganhou: ${result.payout} coins`;
+
+      playerState[userId].currentGame = "Slot";
+      return showGameLayout(chatId, userId, "Slot", resultText);
+    }
+
+    // ---------- Roleta ----------
+    case "game_roulette":
+    case "play_roulette": {
+      const colors = ["🔴 Vermelho", "⚫ Preto", "🟢 Verde"];
+      const chosen = colors[Math.floor(Math.random() * colors.length)];
+      const user = await getUser(userId);
+      const bet = 10;
+      user.coins -= bet;
+      const payout = (chosen === "🟢 Verde") ? 140 : 20; // exemplo de payout
+      user.coins += payout;
       await updateUser(userId, user);
-      bot.sendMessage(chatId, `🎯 Roleta: cor sorteada: ${roulette.result}\n💰 Saldo: ${user.coins}`);
-      break;
 
-    // 🃏 Blackjack
-    case "blackjack":
-      if (!canBet(user)) return bot.answerCallbackQuery(query.id, { text: "⏳ Aguarde 5s." });
-      const bjResult = playBlackjack(10);
-      user.coins -= 10;
-      if (bjResult.payout > 0) user.coins += bjResult.payout;
-      user.last_bet = Date.now();
+      const resultText = `🎯 Cor sorteada: ${chosen}\n💸 Ganhou: ${payout} coins`;
+      playerState[userId].currentGame = "Roleta";
+      return showGameLayout(chatId, userId, "Roleta", resultText);
+    }
+
+    // ---------- Blackjack ----------
+    case "game_blackjack":
+    case "play_blackjack": {
+      const result = playBlackjack(10);
+      const user = await getUser(userId);
+      const bet = 10;
+      user.coins -= bet;
+      if (result.payout > 0) user.coins += result.payout;
       await updateUser(userId, user);
-      bot.sendMessage(chatId, `🃏 Blackjack: Player ${bjResult.player} vs Dealer ${bjResult.dealer}\n💰 Saldo: ${user.coins}`);
-      break;
 
-    // ⚔️ Duel - submenu
-    case "duel_menu":
-      const onlineUsers = [123456789, 987654321]; // Exemplo: IDs de jogadores online
-      const duelButtons = onlineUsers
-        .filter(id => id !== userId)
-        .map(id => [{ text: `Desafiar ${id}`, callback_data: `duel_${id}` }]);
+      const resultText = `🃏 Player: ${result.player} vs Dealer: ${result.dealer}\n💸 Ganhou: ${result.payout} coins`;
+      playerState[userId].currentGame = "Blackjack";
+      return showGameLayout(chatId, userId, "Blackjack", resultText);
+    }
 
-      bot.sendMessage(chatId, "⚔️ Escolha um oponente:", {
-        reply_markup: { inline_keyboard: duelButtons }
-      });
-      break;
+    // ---------- Duel ----------
+    case "game_duel":
+      // Exemplo simplificado: mostra jogadores online
+      const onlinePlayers = [123456789, 987654321].filter(id => id !== userId);
+      const duelButtons = onlinePlayers.map(id => [{ text: `Desafiar ${id}`, callback_data: `duel_${id}` }]);
+      return bot.sendMessage(chatId, "⚔️ Escolha um oponente:", { reply_markup: { inline_keyboard: duelButtons } });
 
-    // ⚔️ Duel - jogar
     default:
+      // Duel jogando
       if (query.data.startsWith("duel_")) {
         const opponentId = parseInt(query.data.split("_")[1]);
         const result = duel(userId, opponentId);
@@ -115,18 +177,10 @@ bot.on("callback_query", async (query) => {
         if (result.winner === userId) text = `🏆 Você venceu o duelo contra ${opponentId}!`;
         else if (result.winner === opponentId) text = `💀 Você perdeu para ${opponentId}!`;
         else text = "🤝 Empate no duelo!";
-        bot.sendMessage(chatId, text);
-      }
-      break;
 
-    // 🏆 Ranking
-    case "ranking":
-      const top = await leaderboard();
-      let msg = "🏆 *Ranking do Torneio*\n\n";
-      top.forEach((p, i) => {
-        msg += `${i + 1}. ID: ${p.telegram_id} - ${p.tournament_points} pts\n`;
-      });
-      bot.sendMessage(chatId, msg, { parse_mode: "Markdown" });
+        return showGameLayout(chatId, userId, "Duel", text);
+      }
+
       break;
   }
 
