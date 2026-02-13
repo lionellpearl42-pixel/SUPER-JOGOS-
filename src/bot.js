@@ -1,235 +1,97 @@
 require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
-const sqlite3 = require("sqlite3").verbose();
+const { getUser, updateCoins, addHistory, getHistory } = require("./database");
+const { spinSlot } = require("./games/slot");
+const { spinRoulette } = require("./games/roulette");
+const { playBlackjack } = require("./games/blackjack");
 
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
-/* ================= DATABASE ================= */
-
-const db = new sqlite3.Database("./casino.db");
-
-db.serialize(() => {
-  db.run(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY,
-      coins INTEGER DEFAULT 1000
-    )
-  `);
-});
-
-function getUser(id) {
-  return new Promise((resolve) => {
-    db.get("SELECT * FROM users WHERE id = ?", [id], (err, row) => {
-      if (!row) {
-        db.run("INSERT INTO users (id, coins) VALUES (?, 1000)", [id]);
-        return resolve({ id, coins: 1000 });
-      }
-      resolve(row);
-    });
-  });
+function formatCoins(coins) {
+  return `💎 Saldo: ${coins}`;
 }
 
-function updateCoins(id, coins) {
-  return new Promise((resolve) => {
-    db.run("UPDATE users SET coins = ? WHERE id = ?", [coins, id], resolve);
-  });
-}
+bot.onText(/\/start|\/menu/, async (msg) => {
+  const user = await getUser(msg.from.id);
+  bot.sendMessage(msg.chat.id,
+`🎰 CASSINO TOP TELEGRAM
 
-/* ================= GAMES ================= */
+${formatCoins(user.coins)}
 
-function spinSlot() {
-  const symbols = ["🍒","🍋","🍊","💎","7️⃣"];
-  const result = [
-    symbols[Math.floor(Math.random()*symbols.length)],
-    symbols[Math.floor(Math.random()*symbols.length)],
-    symbols[Math.floor(Math.random()*symbols.length)]
-  ];
-
-  let payout = 0;
-  if (result[0] === result[1] && result[1] === result[2]) {
-    payout = result[0] === "7️⃣" ? 200 : 50;
-  }
-
-  return { combo: result.join(" | "), payout };
-}
-
-function spinRoulette() {
-  const colors = ["🔴 Vermelho","⚫ Preto","🟢 Verde"];
-  const result = colors[Math.floor(Math.random()*colors.length)];
-  const payout = result === "🟢 Verde" ? 140 : 20;
-  return { result, payout };
-}
-
-function playBlackjack() {
-  const cards = ["A♠","K♠","Q♠","J♠","10♠","9♠","8♠"];
-
-  const player = [
-    cards[Math.floor(Math.random()*cards.length)],
-    cards[Math.floor(Math.random()*cards.length)]
-  ];
-
-  const dealer = [
-    cards[Math.floor(Math.random()*cards.length)],
-    cards[Math.floor(Math.random()*cards.length)]
-  ];
-
-  const payout = Math.random() > 0.5 ? 30 : 0;
-
-  return { player, dealer, payout };
-}
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-/* ================= MENU ================= */
-
-async function showMenu(chatId, userId) {
-  const user = await getUser(userId);
-
-  return bot.sendMessage(chatId,
-`🎰 *CASSINO ROYAL*
-
-💰 Saldo: *${user.coins} coins*
-
-Escolha seu jogo:`,
-{
-  parse_mode: "Markdown",
-  reply_markup: {
-    inline_keyboard: [
+Escolha um jogo:`,
+  { reply_markup: { inline_keyboard: [
       [{ text: "🎰 Slot", callback_data: "slot" }],
       [{ text: "🎡 Roleta", callback_data: "roulette" }],
-      [{ text: "🃏 Blackjack", callback_data: "blackjack" }]
-    ]
-  }
+      [{ text: "🃏 Blackjack", callback_data: "blackjack" }],
+      [{ text: "📜 Histórico", callback_data: "history" }]
+  ]}});
 });
-}
-
-bot.onText(/\/start/, async (msg) => {
-  await showMenu(msg.chat.id, msg.from.id);
-});
-
-/* ================= GAME HANDLER ================= */
-
-const BET = 10;
 
 bot.on("callback_query", async (query) => {
-
   const chatId = query.message.chat.id;
   const userId = query.from.id;
-  const data = query.data;
-
   const user = await getUser(userId);
 
-  if (user.coins < BET) {
-    await bot.answerCallbackQuery(query.id, { text: "Saldo insuficiente!" });
-    return;
-  }
+  const bet = 10;
+  if (user.coins < bet) return bot.sendMessage(chatId, "Saldo insuficiente.");
 
-  if (data === "slot") {
-
-    user.coins -= BET;
-    await updateCoins(userId, user.coins);
-
-    const anim = await bot.sendAnimation(
-      chatId,
-      "https://media.giphy.com/media/l3q2K5jinAlChoCLS/giphy.gif",
-      { caption: "🎰 Girando..." }
-    );
-
-    await sleep(2500);
-
+  if (query.data === "slot") {
+    user.coins -= bet;
     const result = spinSlot();
     user.coins += result.payout;
     await updateCoins(userId, user.coins);
+    addHistory(userId, "Slot", bet, result.payout);
 
-    await bot.editMessageCaption(
+    bot.sendMessage(chatId,
 `🎰 SLOT
 
 ${result.combo}
 
 💰 Ganhou: ${result.payout}
-💎 Saldo: ${user.coins}`,
-{
-  chat_id: chatId,
-  message_id: anim.message_id,
-  reply_markup: {
-    inline_keyboard: [
-      [{ text: "🔁 Jogar novamente", callback_data: "slot" }],
-      [{ text: "🏠 Menu", callback_data: "menu" }]
-    ]
-  }
-});
-
+${formatCoins(user.coins)}`);
   }
 
-  if (data === "roulette") {
-
-    user.coins -= BET;
-    await updateCoins(userId, user.coins);
-
-    const msg = await bot.sendVideo(
-      chatId,
-      "https://samplelib.com/lib/preview/mp4/sample-5s.mp4",
-      { caption: "🎡 Girando..." }
-    );
-
-    await sleep(3000);
-
+  if (query.data === "roulette") {
+    user.coins -= bet;
     const result = spinRoulette();
     user.coins += result.payout;
     await updateCoins(userId, user.coins);
+    addHistory(userId, "Roleta", bet, result.payout);
 
-    await bot.editMessageCaption(
+    bot.sendMessage(chatId,
 `🎡 ROLETA
 
-Resultado: ${result.result}
+${result.result}
 
 💰 Ganhou: ${result.payout}
-💎 Saldo: ${user.coins}`,
-{
-  chat_id: chatId,
-  message_id: msg.message_id,
-  reply_markup: {
-    inline_keyboard: [
-      [{ text: "🔁 Girar novamente", callback_data: "roulette" }],
-      [{ text: "🏠 Menu", callback_data: "menu" }]
-    ]
-  }
-});
-
+${formatCoins(user.coins)}`);
   }
 
-  if (data === "blackjack") {
-
-    user.coins -= BET;
+  if (query.data === "blackjack") {
+    user.coins -= bet;
+    const result = playBlackjack();
+    user.coins += result.payout;
     await updateCoins(userId, user.coins);
+    addHistory(userId, "Blackjack", bet, result.payout);
 
-    const game = playBlackjack();
-    user.coins += game.payout;
-    await updateCoins(userId, user.coins);
-
-    await bot.sendMessage(chatId,
+    bot.sendMessage(chatId,
 `🃏 BLACKJACK
 
-Você: ${game.player.join(" | ")}
-Dealer: ${game.dealer.join(" | ")}
+Você: ${result.player.join(" | ")}
+Dealer: ${result.dealer.join(" | ")}
 
-💰 Ganhou: ${game.payout}
-💎 Saldo: ${user.coins}`,
-{
-  reply_markup: {
-    inline_keyboard: [
-      [{ text: "🔁 Jogar novamente", callback_data: "blackjack" }],
-      [{ text: "🏠 Menu", callback_data: "menu" }]
-    ]
-  }
-});
+💰 Resultado: ${result.payout}
+${formatCoins(user.coins)}`);
   }
 
-  if (data === "menu") {
-    await showMenu(chatId, userId);
+  if (query.data === "history") {
+    const history = await getHistory(userId);
+    if (history.length === 0) bot.sendMessage(chatId, "Nenhuma aposta ainda.");
+    else {
+      const msg = history.map(h => `${h.date.split("T")[0]} - ${h.game} - Bet:${h.bet} Resultado:${h.result}`).join("\n");
+      bot.sendMessage(chatId, `📜 Últimas apostas:\n${msg}`);
+    }
   }
 
-  await bot.answerCallbackQuery(query.id);
+  bot.answerCallbackQuery(query.id);
 });
